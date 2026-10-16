@@ -20,6 +20,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>Focus Lock closes tabs on blocked websites during focus time.</string>
 </dict></plist>
 PLIST
 codesign --force --sign - "$APP" >/dev/null 2>&1

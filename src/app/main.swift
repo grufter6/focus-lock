@@ -99,6 +99,60 @@ func scheduledEnd(_ schedule: [ScheduleBlock], now: Date = Date()) -> Date? {
     schedule.compactMap { blockEnd($0, now: now) }.max()
 }
 
+/// Other addresses for the same site. /etc/hosts has no wildcards, so these need their own lines.
+let siteAliases: [String: [String]] = [
+    "youtube.com": ["youtu.be", "youtube-nocookie.com", "music.youtube.com", "gaming.youtube.com", "youtubekids.com"],
+    "tiktok.com": ["vm.tiktok.com", "vt.tiktok.com"],
+    "instagram.com": ["l.instagram.com"],
+    "roblox.com": ["web.roblox.com"],
+]
+
+func expandedSites(_ sites: [String]) -> [String] {
+    Array(Set(sites + sites.flatMap { siteAliases[$0] ?? [] })).sorted()
+}
+
+/// Browsers whose tabs Focus Lock can close (their names in AppleScript).
+let browsers: [(id: String, name: String)] = [
+    ("com.google.Chrome", "Google Chrome"), ("com.apple.Safari", "Safari"), ("com.brave.Browser", "Brave Browser"),
+    ("com.microsoft.edgemac", "Microsoft Edge"), ("company.thebrowser.Browser", "Arc"),
+]
+
+/// Closes every open tab on a blocked site in the running browsers. Returns the browsers that refused
+/// (macOS asks once per browser whether Focus Lock may control it).
+func closeBlockedTabs(_ sites: [String]) -> [String] {
+    guard !sites.isEmpty else { return [] }
+    let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+    // matches the site and its subdomains: "://youtube.com/", "www.youtube.com/", "...youtube.com" at the end
+    let test = sites.map { s in
+        "u contains \"://\(s)/\" or u contains \".\(s)/\" or u ends with \"://\(s)\" or u ends with \".\(s)\""
+    }.joined(separator: " or ")
+    var refused: [String] = []
+    for b in browsers where running.contains(b.id) {
+        let source = """
+        tell application "\(b.name)"
+          set n to 0
+          repeat with w in windows
+            repeat with i from (count of tabs of w) to 1 by -1
+              set u to URL of tab i of w
+              if u is not missing value then
+                if \(test) then
+                  close tab i of w
+                  set n to n + 1
+                end if
+              end if
+            end repeat
+          end repeat
+          return n
+        end tell
+        """
+        var err: NSDictionary?
+        let result = NSAppleScript(source: source)?.executeAndReturnError(&err)
+        if let err, (err[NSAppleScript.errorNumber] as? Int) == -1743 { refused.append(b.name) }
+        if let n = result?.int32Value, n > 0 { NSLog("FocusLock: closed \(n) blocked tab(s) in \(b.name)") }
+    }
+    return refused
+}
+
 // MARK: - App
 
 final class FocusLock: NSObject, NSApplicationDelegate {
@@ -163,8 +217,15 @@ final class FocusLock: NSObject, NSApplicationDelegate {
             try? JSONEncoder().encode(orig).write(to: originalWallpaperURL)
         }
         let list = wallpapers()
-        if !list.isEmpty { wallpaperIndex = Int.random(in: 0..<list.count) }
-        nextWallpaper()
+        // Keep the wallpaper that's showing if it's one of ours (relaunching shouldn't change it);
+        // otherwise start somewhere random.
+        let current = NSScreen.main.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }?.standardizedFileURL.path
+        if let i = list.firstIndex(where: { $0.standardizedFileURL.path == current }) {
+            wallpaperIndex = i
+        } else {
+            if !list.isEmpty { wallpaperIndex = Int.random(in: 0..<list.count) }
+            nextWallpaper()
+        }
         wallpaperTimer?.invalidate()
         let mins = Double(max(1, settings.wallpaperMinutes ?? 60))
         wallpaperTimer = Timer.scheduledTimer(withTimeInterval: mins * 60, repeats: true) { [weak self] _ in self?.nextWallpaper() }
@@ -236,13 +297,19 @@ final class FocusLock: NSObject, NSApplicationDelegate {
         let until = focusUntil
         if let until {
             NSWorkspace.shared.runningApplications.forEach(block)
+            let sites = expandedSites(settings.blockedSites)
             // keep the helper's copy of the site list and end time current (schedule sessions included)
-            if loadState()?.focusUntil ?? 0 < until.timeIntervalSince1970 || loadState()?.blockedSites != settings.blockedSites {
-                saveState(SessionState(focusUntil: until.timeIntervalSince1970, blockedSites: settings.blockedSites))
+            if loadState()?.focusUntil ?? 0 < until.timeIntervalSince1970 || loadState()?.blockedSites != sites {
+                saveState(SessionState(focusUntil: until.timeIntervalSince1970, blockedSites: sites))
             }
+            // A tab opened before focus started keeps its connection, so /etc/hosts alone doesn't stop it.
+            browserBlocked = closeBlockedTabs(sites)
         }
         render(until)
     }
+
+    /// Browsers that refused to let Focus Lock close their tabs (Automation permission turned off).
+    var browserBlocked: [String] = []
 
     func render(_ until: Date?) {
         let left = until.map { max(0, Int(ceil($0.timeIntervalSinceNow / 60))) }
@@ -266,6 +333,11 @@ final class FocusLock: NSObject, NSApplicationDelegate {
             let mi = NSMenuItem(title: "   " + title, action: #selector(startFromMenu(_:)), keyEquivalent: "")
             mi.target = self; mi.representedObject = mins
             menu.addItem(mi)
+        }
+        if !browserBlocked.isEmpty {
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "⚠︎ Can't close tabs in \(browserBlocked.joined(separator: ", ")):", action: nil, keyEquivalent: "")
+            menu.addItem(withTitle: "   allow it in System Settings → Privacy & Security → Automation", action: nil, keyEquivalent: "")
         }
         if !helperInstalled {
             menu.addItem(.separator())

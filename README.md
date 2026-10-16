@@ -22,7 +22,7 @@ You can't stop focus time early: the menu has no Quit, and the app relaunches if
 | Menu-bar app | `src/app/` → `~/Applications/Focus Lock.app` | Menu, Settings window, closes blocked apps, rotates the wallpapers. Starts at login with `--background`, and relaunches if killed. |
 | Root helper | `src/FocusLockHelper.swift` → `/Library/Application Support/FocusLock/` | Runs as root. Keeps the session's end time in a root-owned file that only moves later, blocks sites in `/etc/hosts`, and closes blocked apps even if the menu-bar app is gone. Caps any session at 24 h. Log: `/Library/Logs/FocusLock-helper.log` |
 | Settings | `~/Library/Application Support/FocusLock/settings.json` | Written by the Settings window |
-| Wallpapers | `wallpapers/` | 22 dark Wikimedia Commons photos (nature, night skies and city skylines), changed every hour. `CREDITS.txt` holds the attribution their licences require, so keep it with them. `src/make_wallpapers.py` draws the older generated set into `wallpapers/generated/`. |
+| Wallpapers | `wallpapers/` | 26 dark Wikimedia Commons photos (nature, night skies and city skylines), changed every hour. `CREDITS.txt` holds the attribution their licences require, so keep it with them. `src/make_wallpapers.py` draws the older generated set into `wallpapers/generated/`. |
 
 ## Scripts
 
