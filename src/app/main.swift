@@ -21,6 +21,8 @@ struct Settings: Codable, Equatable {
     var schedule: [ScheduleBlock]
     var ambientWallpapers: Bool? = true    // rotate the dark focus wallpapers
     var wallpaperMinutes: Int? = 60
+    var wallpaperShuffle: Bool? = true     // random order (false: in order)
+    var wallpaperOff: [String]? = []       // file names left out of the rotation
 
     static let defaults = Settings(
         blockedApps: ["com.roblox.RobloxPlayer", "com.roblox.RobloxStudio", "com.mojang.minecraftlauncher",
@@ -159,8 +161,6 @@ final class FocusLock: NSObject, NSApplicationDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     var settings = loadSettings()
     var timer: Timer?
-    var wallpaperTimer: Timer?
-    var wallpaperIndex = 0
 
     /// When the current focus ends (manual session, root lock file or schedule), or nil when off.
     var focusUntil: Date? {
@@ -183,9 +183,10 @@ final class FocusLock: NSObject, NSApplicationDelegate {
         }
         tick()
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.tick() }
-        if settings.ambientWallpapers ?? true { startWallpapers() }
+        if settings.ambientWallpapers ?? true { WallpaperManager.shared.start() }
         // Opened by you (Finder, Spotlight, Launchpad) rather than at login: show the settings window.
-        if !CommandLine.arguments.contains("--background") { openSettings() }
+        if CommandLine.arguments.contains("--wallpapers") { openWallpapers() }
+        else if !CommandLine.arguments.contains("--background") { openSettings() }
     }
 
     /// Opening the app again while it's running (it has no Dock icon) shows the settings window.
@@ -194,80 +195,22 @@ final class FocusLock: NSObject, NSApplicationDelegate {
         return true
     }
 
-    // MARK: ambient wallpapers
-
-    var wallpaperDir: URL { dir.appendingPathComponent("Wallpapers") }
-    var originalWallpaperURL: URL { dir.appendingPathComponent("original-wallpapers.json") }
-
-    func wallpapers() -> [URL] {
-        let exts: Set<String> = ["jpg", "jpeg", "png", "heic"]
-        return ((try? FileManager.default.contentsOfDirectory(at: wallpaperDir, includingPropertiesForKeys: nil)) ?? [])
-            .filter { exts.contains($0.pathExtension.lowercased()) }.sorted { $0.path < $1.path }
-    }
-
-    func startWallpapers() {
-        // remember each screen's own wallpaper once, so turning rotation off puts it back
-        if !FileManager.default.fileExists(atPath: originalWallpaperURL.path) {
-            var orig: [String: String] = [:]
-            for sc in NSScreen.screens {
-                if let u = NSWorkspace.shared.desktopImageURL(for: sc), !u.path.hasPrefix(wallpaperDir.path) {
-                    orig[sc.localizedName] = u.path
-                }
-            }
-            try? JSONEncoder().encode(orig).write(to: originalWallpaperURL)
-        }
-        let list = wallpapers()
-        // Keep the wallpaper that's showing if it's one of ours (relaunching shouldn't change it);
-        // otherwise start somewhere random.
-        let current = NSScreen.main.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }?.standardizedFileURL.path
-        if let i = list.firstIndex(where: { $0.standardizedFileURL.path == current }) {
-            wallpaperIndex = i
-        } else {
-            if !list.isEmpty { wallpaperIndex = Int.random(in: 0..<list.count) }
-            nextWallpaper()
-        }
-        wallpaperTimer?.invalidate()
-        let mins = Double(max(1, settings.wallpaperMinutes ?? 60))
-        wallpaperTimer = Timer.scheduledTimer(withTimeInterval: mins * 60, repeats: true) { [weak self] _ in self?.nextWallpaper() }
-    }
-
-    func nextWallpaper() {
-        let list = wallpapers()
-        guard !list.isEmpty else { return }
-        wallpaperIndex = (wallpaperIndex + 1) % list.count
-        for sc in NSScreen.screens {
-            try? NSWorkspace.shared.setDesktopImageURL(list[wallpaperIndex], for: sc,
-                options: [.imageScaling: NSNumber(value: NSImageScaling.scaleProportionallyUpOrDown.rawValue), .allowClipping: true])
-        }
-    }
-
-    func stopWallpapers() {
-        wallpaperTimer?.invalidate(); wallpaperTimer = nil
-        if let data = try? Data(contentsOf: originalWallpaperURL),
-           let orig = try? JSONDecoder().decode([String: String].self, from: data) {
-            for sc in NSScreen.screens {
-                if let p = orig[sc.localizedName] ?? orig.values.first {
-                    try? NSWorkspace.shared.setDesktopImageURL(URL(fileURLWithPath: p), for: sc, options: [:])
-                }
-            }
-            try? FileManager.default.removeItem(at: originalWallpaperURL)
-        }
-    }
+    // MARK: ambient wallpapers (WallpaperManager in Wallpapers.swift does the work)
 
     @objc func toggleWallpapers() {
         var s = loadSettings()
         s.ambientWallpapers = !(s.ambientWallpapers ?? true)
-        let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try? enc.encode(s).write(to: settingsURL)
+        saveSettings(s)
         settings = s
-        if s.ambientWallpapers == true { startWallpapers() } else { stopWallpapers() }
+        WallpaperManager.shared.apply()
         render(focusUntil)
     }
 
-    @objc func skipWallpaper() { nextWallpaper() }
+    @objc func skipWallpaper() { WallpaperManager.shared.next() }
+    @objc func previousWallpaper() { WallpaperManager.shared.previous() }
 
     func applicationWillTerminate(_ n: Notification) {
-        if settings.ambientWallpapers ?? true { stopWallpapers() }   // quitting puts your own wallpaper back
+        if settings.ambientWallpapers ?? true { WallpaperManager.shared.stop() }   // quitting puts your own wallpaper back
     }
 
     func start(minutes: Double) {
@@ -351,10 +294,13 @@ final class FocusLock: NSObject, NSApplicationDelegate {
         wp.target = self; wp.state = (settings.ambientWallpapers ?? true) ? .on : .off
         menu.addItem(wp)
         if settings.ambientWallpapers ?? true {
-            let nx = NSMenuItem(title: "   Next wallpaper", action: #selector(skipWallpaper), keyEquivalent: "")
-            nx.target = self
-            menu.addItem(nx)
+            for (title, sel) in [("   Previous wallpaper", #selector(previousWallpaper)), ("   Next wallpaper", #selector(skipWallpaper))] {
+                let mi = NSMenuItem(title: title, action: sel, keyEquivalent: ""); mi.target = self
+                menu.addItem(mi)
+            }
         }
+        let wps = NSMenuItem(title: "   Wallpapers…", action: #selector(openWallpapers), keyEquivalent: ""); wps.target = self
+        menu.addItem(wps)
         menu.addItem(.separator())
         let edit = NSMenuItem(title: "Settings: focus hours, apps and sites…", action: #selector(openSettings), keyEquivalent: ",")
         edit.target = self
@@ -397,6 +343,10 @@ final class FocusLock: NSObject, NSApplicationDelegate {
 
     @objc func openSettings() {
         settingsWindow.show(lockedUntil: focusUntil) { [weak self] in self?.tick() }
+    }
+
+    @objc func openWallpapers() {
+        settingsWindow.show(lockedUntil: focusUntil, page: .wallpapers) { [weak self] in self?.tick() }
     }
 }
 

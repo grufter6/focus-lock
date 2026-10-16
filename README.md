@@ -13,6 +13,10 @@ You can't stop focus time early: the menu has no Quit, and the app relaunches if
   - **Blocked apps:** add with a file picker
   - **Blocked websites:** type one in, like `youtube.com`
 - **Start now:** click the lock icon in the menu bar → 25 min / 50 min / 90 min / 2 hours. Picking one during a session adds time.
+- **Wallpapers:** menu → Wallpapers… (or the Wallpapers tab in the settings window): turn the focus photos on or off
+  (off puts your own wallpaper back), change every 15 min to once a day, shuffle or in order, Previous / Next,
+  click a photo to show it now, untick photos to leave them out, and **Add photos…** for your own (saved as `my-…`,
+  shown under *Your photos*; right-click → Move to Trash removes them). These apply right away, even during focus time.
 - **Lock rules:** while focus is on, you can add blocks but not remove or shorten anything. Saving focus hours that include right now asks before it locks you in.
 
 ## How it's built
