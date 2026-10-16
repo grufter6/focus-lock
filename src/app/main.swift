@@ -19,10 +19,6 @@ struct Settings: Codable, Equatable {
     var blockedSites: [String]    // domains; www. and m. are added automatically
     var blockedPaths: [String]? = ["/Library/Application Support/minecraft/"]   // processes running from here (the Minecraft game is Java)
     var schedule: [ScheduleBlock]
-    var ambientWallpapers: Bool? = true    // rotate the dark focus wallpapers
-    var wallpaperMinutes: Int? = 60
-    var wallpaperShuffle: Bool? = true     // random order (false: in order)
-    var wallpaperOff: [String]? = []       // file names left out of the rotation
 
     static let defaults = Settings(
         blockedApps: ["com.roblox.RobloxPlayer", "com.roblox.RobloxStudio", "com.mojang.minecraftlauncher",
@@ -30,7 +26,7 @@ struct Settings: Codable, Equatable {
         blockedSites: ["tiktok.com", "instagram.com", "snapchat.com", "roblox.com", "poki.com", "coolmathgames.com",
                        "minecraft.net", "crazygames.com", "gameloft.com"],
         blockedPaths: ["/Library/Application Support/minecraft/"],
-        schedule: [], ambientWallpapers: true, wallpaperMinutes: 60)
+        schedule: [])
 }
 
 struct SessionState: Codable {
@@ -183,34 +179,14 @@ final class FocusLock: NSObject, NSApplicationDelegate {
         }
         tick()
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.tick() }
-        if settings.ambientWallpapers ?? true { WallpaperManager.shared.start() }
         // Opened by you (Finder, Spotlight, Launchpad) rather than at login: show the settings window.
-        if CommandLine.arguments.contains("--wallpapers") { openWallpapers() }
-        else if !CommandLine.arguments.contains("--background") { openSettings() }
+        if !CommandLine.arguments.contains("--background") { openSettings() }
     }
 
     /// Opening the app again while it's running (it has no Dock icon) shows the settings window.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         openSettings()
         return true
-    }
-
-    // MARK: ambient wallpapers (WallpaperManager in Wallpapers.swift does the work)
-
-    @objc func toggleWallpapers() {
-        var s = loadSettings()
-        s.ambientWallpapers = !(s.ambientWallpapers ?? true)
-        saveSettings(s)
-        settings = s
-        WallpaperManager.shared.apply()
-        render(focusUntil)
-    }
-
-    @objc func skipWallpaper() { WallpaperManager.shared.next() }
-    @objc func previousWallpaper() { WallpaperManager.shared.previous() }
-
-    func applicationWillTerminate(_ n: Notification) {
-        if settings.ambientWallpapers ?? true { WallpaperManager.shared.stop() }   // quitting puts your own wallpaper back
     }
 
     func start(minutes: Double) {
@@ -290,17 +266,6 @@ final class FocusLock: NSObject, NSApplicationDelegate {
         let sched = settings.schedule.isEmpty ? "Focus hours: none set" :
             "Focus hours: " + settings.schedule.map { "\(dayNames($0.days)) \(clock($0.start))–\(clock($0.end))" }.joined(separator: ", ")
         menu.addItem(withTitle: sched, action: nil, keyEquivalent: "")
-        let wp = NSMenuItem(title: "Ambient focus wallpapers", action: #selector(toggleWallpapers), keyEquivalent: "")
-        wp.target = self; wp.state = (settings.ambientWallpapers ?? true) ? .on : .off
-        menu.addItem(wp)
-        if settings.ambientWallpapers ?? true {
-            for (title, sel) in [("   Previous wallpaper", #selector(previousWallpaper)), ("   Next wallpaper", #selector(skipWallpaper))] {
-                let mi = NSMenuItem(title: title, action: sel, keyEquivalent: ""); mi.target = self
-                menu.addItem(mi)
-            }
-        }
-        let wps = NSMenuItem(title: "   Wallpapers…", action: #selector(openWallpapers), keyEquivalent: ""); wps.target = self
-        menu.addItem(wps)
         menu.addItem(.separator())
         let edit = NSMenuItem(title: "Settings: focus hours, apps and sites…", action: #selector(openSettings), keyEquivalent: ",")
         edit.target = self
@@ -343,10 +308,6 @@ final class FocusLock: NSObject, NSApplicationDelegate {
 
     @objc func openSettings() {
         settingsWindow.show(lockedUntil: focusUntil) { [weak self] in self?.tick() }
-    }
-
-    @objc func openWallpapers() {
-        settingsWindow.show(lockedUntil: focusUntil, page: .wallpapers) { [weak self] in self?.tick() }
     }
 }
 

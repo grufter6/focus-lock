@@ -46,10 +46,6 @@ echo "Asking for your Mac password to install the helper that blocks websites…
 osascript -e "do shell script \"/bin/bash \" & quoted form of \"$ROOT_SCRIPT\" with prompt \"Focus Lock needs your password once to install its website blocker.\" with administrator privileges"
 rm -rf "$STAGE"
 
-# ── wallpapers (real photos from Wikimedia Commons; CREDITS.txt holds the required attribution) ──
-mkdir -p "$USER_DIR/Wallpapers"
-cp wallpapers/*.jpg wallpapers/CREDITS.txt "$USER_DIR/Wallpapers/"
-
 # ── the menu-bar app ──
 launchctl bootout "gui/$(id -u)/com.focuslock.app" 2>/dev/null || true
 pkill -x FocusLock 2>/dev/null || true
