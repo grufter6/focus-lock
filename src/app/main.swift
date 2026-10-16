@@ -20,7 +20,7 @@ struct Settings: Codable, Equatable {
     var blockedPaths: [String]? = ["/Library/Application Support/minecraft/"]   // processes running from here (the Minecraft game is Java)
     var schedule: [ScheduleBlock]
     var ambientWallpapers: Bool? = true    // rotate the dark focus wallpapers
-    var wallpaperMinutes: Int? = 5
+    var wallpaperMinutes: Int? = 60
 
     static let defaults = Settings(
         blockedApps: ["com.roblox.RobloxPlayer", "com.roblox.RobloxStudio", "com.mojang.minecraftlauncher",
@@ -28,7 +28,7 @@ struct Settings: Codable, Equatable {
         blockedSites: ["tiktok.com", "instagram.com", "snapchat.com", "roblox.com", "poki.com", "coolmathgames.com",
                        "minecraft.net", "crazygames.com", "gameloft.com"],
         blockedPaths: ["/Library/Application Support/minecraft/"],
-        schedule: [], ambientWallpapers: true, wallpaperMinutes: 5)
+        schedule: [], ambientWallpapers: true, wallpaperMinutes: 60)
 }
 
 struct SessionState: Codable {
@@ -166,7 +166,7 @@ final class FocusLock: NSObject, NSApplicationDelegate {
         if !list.isEmpty { wallpaperIndex = Int.random(in: 0..<list.count) }
         nextWallpaper()
         wallpaperTimer?.invalidate()
-        let mins = Double(max(1, settings.wallpaperMinutes ?? 5))
+        let mins = Double(max(1, settings.wallpaperMinutes ?? 60))
         wallpaperTimer = Timer.scheduledTimer(withTimeInterval: mins * 60, repeats: true) { [weak self] _ in self?.nextWallpaper() }
     }
 
