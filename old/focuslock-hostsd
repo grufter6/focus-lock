@@ -1,0 +1,47 @@
+#!/bin/zsh
+# Focus Lock website blocker. Runs as root every 10 s (LaunchDaemon com.focuslock.hostsd).
+# Reads the session the app wrote, keeps a root-owned copy that can only be extended (so editing the
+# app's files cannot end a session early), and adds/removes a marked block section in /etc/hosts.
+# Only ever writes "0.0.0.0 <validated domain>" lines, so a tampered state file can block sites, nothing more.
+STATE="${FOCUSLOCK_STATE:-__STATE__}"
+LOCKDIR="${FOCUSLOCK_LOCKDIR:-/Library/Application Support/FocusLock}"
+HOSTS="${FOCUSLOCK_HOSTS:-/etc/hosts}"
+BEGIN="# >>> FocusLock (managed, do not edit)"
+END="# <<< FocusLock"
+mkdir -p "$LOCKDIR"
+now=$(date +%s)
+lock=$(cat "$LOCKDIR/lock-until" 2>/dev/null); [[ $lock == <-> ]] || lock=0
+
+valid() { [[ ${#1} -le 100 && $1 =~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' ]] }
+
+if [[ -r $STATE ]]; then
+  end=$(plutil -extract focusUntil raw -o - "$STATE" 2>/dev/null); end=${end%%.*}
+  if [[ $end == <-> ]] && (( end > now && end <= now + 43200 )); then   # accept at most 12 h ahead
+    if (( end > lock )); then echo $end > "$LOCKDIR/lock-until"; lock=$end; fi
+    i=0
+    while site=$(plutil -extract "blockedSites.$i" raw -o - "$STATE" 2>/dev/null); do
+      site=${site:l}; site=${site#www.}
+      valid "$site" && ! grep -qx "$site" "$LOCKDIR/sites" 2>/dev/null && echo "$site" >> "$LOCKDIR/sites"
+      (( ++i > 200 )) && break
+    done
+  fi
+fi
+
+block=""
+if (( lock > now )); then
+  while read -r site; do
+    valid "$site" && block+="0.0.0.0 $site"$'\n'"0.0.0.0 www.$site"$'\n'":: $site"$'\n'":: www.$site"$'\n'
+  done < "$LOCKDIR/sites"
+else
+  rm -f "$LOCKDIR/sites"                              # session over: the next one starts from the app's list
+fi
+
+current=$(awk -v b="$BEGIN" -v e="$END" '$0==b{f=1;next} $0==e{f=0;next} f' "$HOSTS")
+[[ "$current"$'\n' == "$block" || ( -z $current && -z $block ) ]] && exit 0
+
+tmp=$(mktemp)
+awk -v b="$BEGIN" -v e="$END" '$0==b{f=1;next} $0==e{f=0;next} !f' "$HOSTS" > "$tmp"
+[[ -n $block ]] && printf '%s\n%s%s\n' "$BEGIN" "$block" "$END" >> "$tmp"
+cat "$tmp" > "$HOSTS"; rm -f "$tmp"
+if [[ $HOSTS == /etc/hosts ]]; then dscacheutil -flushcache; killall -HUP mDNSResponder 2>/dev/null; fi
+exit 0
