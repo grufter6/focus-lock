@@ -345,7 +345,8 @@ final class SettingsWindow {
         window?.makeKeyAndOrderFront(nil)
         // For checking the layout without screen-recording permission: FOCUSLOCK_SNAPSHOT=/path/shot.png
         if let path = ProcessInfo.processInfo.environment["FOCUSLOCK_SNAPSHOT"] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            let delay = Double(ProcessInfo.processInfo.environment["FOCUSLOCK_SNAPSHOT_DELAY"] ?? "") ?? 1.5
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let v = self?.window?.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
                 v.cacheDisplay(in: v.bounds, to: rep)
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
@@ -360,6 +361,8 @@ struct WallpaperSection: View {
     @ObservedObject var m: SettingsModel
     @ObservedObject var w = WallpaperManager.shared
     @State private var kind: WallpaperKind = .all
+    // FOCUSLOCK_SNAPSHOT_SEARCH="query" opens on search results, for checking the layout
+    @State private var finding = ProcessInfo.processInfo.environment["FOCUSLOCK_SNAPSHOT_SEARCH"] != nil
 
     var on: Bool { m.draft.ambientWallpapers ?? true }
     var off: Set<String> { Set(m.draft.wallpaperOff ?? []) }
@@ -393,13 +396,22 @@ struct WallpaperSection: View {
                     Button { NSWorkspace.shared.open(w.folder) } label: { Image(systemName: "folder") }.help("Show the wallpaper folder in Finder")
                 }
                 Text(status).font(.callout).foregroundStyle(.secondary)
+                Picker("Mode", selection: $finding) {
+                    Text("Your wallpapers").tag(false)
+                    Text("Search for more photos").tag(true)
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .padding(.top, 6)
+                if finding {
+                    WallpaperSearchView()
+                } else {
                 Picker("Show", selection: $kind) {
                     ForEach(WallpaperKind.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented).labelsHidden()
                 let shown = w.all.filter { kind == .all || WallpaperKind.of($0) == kind }
                 if shown.isEmpty {
-                    Text(kind == .mine ? "No photos of your own yet. Click Add photos…" : "No photos here.")
+                    Text(kind == .mine ? "No photos of your own yet. Search for some, or click Add photos… to use your own files." : "No photos here.")
                         .foregroundStyle(.secondary).padding(.vertical, 8)
                 }
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 12) {
@@ -407,6 +419,7 @@ struct WallpaperSection: View {
                 }
                 Text("Click a photo to show it now. Untick photos to leave them out of the rotation.")
                     .font(.callout).foregroundStyle(.secondary)
+                }
             } else {
                 Text("Your own wallpaper is showing. Turn this on to rotate the focus photos.").foregroundStyle(.secondary)
             }

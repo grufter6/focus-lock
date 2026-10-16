@@ -17,6 +17,11 @@ You can't stop focus time early: the menu has no Quit, and the app relaunches if
   (off puts your own wallpaper back), change every 15 min to once a day, shuffle or in order, Previous / Next,
   click a photo to show it now, untick photos to leave them out, and **Add photos…** for your own (saved as `my-…`,
   shown under *Your photos*; right-click → Move to Trash removes them). These apply right away, even during focus time.
+- **Search for more photos** (Wallpapers tab → *Search for more photos*): searches Openverse (free Creative Commons
+  photos, no account), HD results first. **+ Add** downloads the photo, crops it to the screen, dims it if it's bright,
+  saves it as `my-…jpg` with the other wallpapers and credits it in `MY-CREDITS.txt` there. Photos whose licence forbids
+  changes ("no derivatives") are left out, since adding one crops and dims it. Searching only runs when you press
+  Search (Openverse allows about 20 anonymous searches a minute; each search is 2 requests).
 - **Lock rules:** while focus is on, you can add blocks but not remove or shorten anything. Saving focus hours that include right now asks before it locks you in.
 
 ## How it's built
