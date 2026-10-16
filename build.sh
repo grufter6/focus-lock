@@ -5,8 +5,16 @@ cd "$(dirname "$0")"
 rm -rf build && mkdir -p build
 APP="build/Focus Lock.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-swiftc -O -o "$APP/Contents/MacOS/FocusLock" src/app/*.swift
-swiftc -O -o build/focuslock-helper src/FocusLockHelper.swift
+# Universal: one binary for Apple Silicon and Intel Macs (macOS 13 or newer).
+universal() {   # universal <output> <sources...>
+  local out="$1"; shift
+  swiftc -O -target arm64-apple-macos13 -o "$out.arm64" "$@"
+  swiftc -O -target x86_64-apple-macos13 -o "$out.x86_64" "$@"
+  lipo -create -output "$out" "$out.arm64" "$out.x86_64"
+  rm -f "$out.arm64" "$out.x86_64"
+}
+universal "$APP/Contents/MacOS/FocusLock" src/app/*.swift
+universal build/focuslock-helper src/FocusLockHelper.swift
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
