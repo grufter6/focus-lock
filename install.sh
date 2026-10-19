@@ -4,6 +4,8 @@
 #   /Library/Application Support/FocusLock/          the root helper that blocks sites and enforces sessions
 #   /Library/LaunchDaemons/com.focuslock.helper.plist
 # Asks for your Mac password once (for the helper). Safe to run again to update.
+# The first time, it also asks you to pick a kill code: the only way to end a focus session early.
+# To change the kill code later: ./install.sh --new-kill-code
 #
 # From the source folder it builds first. From the downloaded release (where this file is
 # "Install Focus Lock.command" next to a ready-built "Focus Lock.app") it installs those instead.
@@ -26,7 +28,21 @@ mkdir -p "$USER_DIR" "$HOME/Applications" "$HOME/Library/LaunchAgents"
 # ── the root helper (needs your password, unless the same helper is already installed) ──
 HELPER="/Library/Application Support/FocusLock/focuslock-helper"
 DAEMON=/Library/LaunchDaemons/com.focuslock.helper.plist
-if cmp -s "$SRC/focuslock-helper" "$HELPER" && grep -qF "$USER_DIR" "$DAEMON" 2>/dev/null; then
+KILL_CODE="/Library/Application Support/FocusLock/kill-code"
+KILL_HASH=""
+if [ ! -f "$KILL_CODE" ] || [ "${1:-}" = "--new-kill-code" ]; then
+  echo "Pick a kill code: typing it in the menu bar ends a focus session early. Keep it somewhere you won't peek."
+  while true; do
+    read -rsp "Kill code: " C1; echo
+    read -rsp "Same kill code again: " C2; echo
+    if [ ${#C1} -lt 4 ]; then echo "Use at least 4 characters."
+    elif [ "$C1" != "$C2" ]; then echo "Those didn't match."
+    else break; fi
+  done
+  KILL_HASH="$(printf '%s' "$C1" | shasum -a 256 | cut -d' ' -f1)"   # only the hash is stored
+  unset C1 C2
+fi
+if [ -z "$KILL_HASH" ] && cmp -s "$SRC/focuslock-helper" "$HELPER" && grep -qF "$USER_DIR" "$DAEMON" 2>/dev/null; then
   echo "The website blocker is already installed and up to date."
 else
 # macOS doesn't let the password-prompt shell read ~/Documents, so stage the helper in a temp folder first.
@@ -37,6 +53,9 @@ cat > "$ROOT_SCRIPT" <<ROOT
 set -e
 mkdir -p "/Library/Application Support/FocusLock"
 install -o root -g wheel -m 755 "$STAGE/focuslock-helper" "/Library/Application Support/FocusLock/focuslock-helper"
+if [ -n "$KILL_HASH" ]; then
+  (umask 077; echo "$KILL_HASH" > "$KILL_CODE"); chown root:wheel "$KILL_CODE"; chmod 600 "$KILL_CODE"
+fi
 cat > /Library/LaunchDaemons/com.focuslock.helper.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

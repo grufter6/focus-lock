@@ -4,7 +4,7 @@ A Mac menu-bar app that locks you into focus time. During focus time:
 - **Apps close:** Roblox, Minecraft (including the Java game) and Asphalt 8 by default.
 - **Websites don't load:** they're blocked in every browser.
 
-You can't stop focus time early: the menu has no Quit, and the app relaunches if you force-quit it.
+You can't stop focus time early without the **kill code**: the menu has no Quit, and the app relaunches if you force-quit it.
 
 ## Using it
 
@@ -14,6 +14,7 @@ You can't stop focus time early: the menu has no Quit, and the app relaunches if
   - **Blocked websites:** type one in, like `youtube.com`
 - **Start now:** click the lock icon in the menu bar → 25 min / 50 min / 90 min / 2 hours. Picking one during a session adds time.
 - **Wallpapers** are now a separate app, **Ambient Wallpapers** (`~/Documents/Startups/Ambient Wallpapers`).
+- **Kill code:** `install.sh` asks you to pick one the first time. During focus, the menu has **End early with kill code…**. It ends the session, and any focus hours running right now, until they'd have ended anyway. A wrong code means a 30-second wait before the next try. Change it with `./install.sh --new-kill-code`.
 - **Lock rules:** while focus is on, you can add blocks but not remove or shorten anything. Saving focus hours that include right now asks before it locks you in.
 
 ## How it's built
@@ -21,7 +22,7 @@ You can't stop focus time early: the menu has no Quit, and the app relaunches if
 | Part | Where | Job |
 |---|---|---|
 | Menu-bar app | `src/app/` → `~/Applications/Focus Lock.app` | Menu, Settings window, closes blocked apps. Starts at login with `--background`, and relaunches if killed. |
-| Root helper | `src/FocusLockHelper.swift` → `/Library/Application Support/FocusLock/` | Runs as root. Keeps the session's end time in a root-owned file that only moves later, blocks sites in `/etc/hosts`, and closes blocked apps even if the menu-bar app is gone. Caps any session at 24 h. Log: `/Library/Logs/FocusLock-helper.log` |
+| Root helper | `src/FocusLockHelper.swift` → `/Library/Application Support/FocusLock/` | Runs as root. Keeps the session's end time in a root-owned file that only moves later, blocks sites in `/etc/hosts`, and closes blocked apps even if the menu-bar app is gone. Caps any session at 24 h. Ends a session early only for the kill code, whose SHA-256 it keeps in a root-only file (`kill-code`, 0600). Log: `/Library/Logs/FocusLock-helper.log` |
 | Settings | `~/Library/Application Support/FocusLock/settings.json` | Written by the Settings window |
 
 ## Scripts

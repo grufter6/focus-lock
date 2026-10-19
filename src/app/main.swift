@@ -1,5 +1,6 @@
 // Focus Lock: menu-bar app that blocks distracting apps (and, with the helper installed, websites)
-// during focus sessions and scheduled focus hours. A started session cannot be ended early.
+// during focus sessions and scheduled focus hours. A started session can only be ended early with the
+// kill code set in install.sh, which the root helper checks.
 import AppKit
 import Foundation
 
@@ -43,6 +44,16 @@ let stateURL = dir.appendingPathComponent("state.json")
 // Written by the root helper; only ever moves later, so editing state.json cannot shorten a session.
 let lockURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["FOCUSLOCK_LOCKFILE"]
                   ?? "/Library/Application Support/FocusLock/lock-until")
+let sysDir = lockURL.deletingLastPathComponent()
+/// Set by install.sh (root only, so the app can see it exists but not read it).
+var killCodeSet: Bool { FileManager.default.fileExists(atPath: sysDir.appendingPathComponent("kill-code").path) }
+/// End of the last session the kill code ended. Focus hours that end by then stay off.
+var killedUntil: Double {
+    Double((try? String(contentsOf: sysDir.appendingPathComponent("killed-until"), encoding: .utf8))?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? 0
+}
+let killRequestURL = dir.appendingPathComponent("kill-request")
+let killResultURL = dir.appendingPathComponent("kill-result")
 /// Installed by install.sh. Without it, apps are still closed but websites aren't blocked.
 var helperInstalled: Bool { FileManager.default.fileExists(atPath: "/Library/LaunchDaemons/com.focuslock.helper.plist") }
 
@@ -165,7 +176,7 @@ final class FocusLock: NSObject, NSApplicationDelegate {
         if let t = try? String(contentsOf: lockURL, encoding: .utf8), let v = Double(t.trimmingCharacters(in: .whitespacesAndNewlines)) {
             ends.append(v)
         }
-        if let e = scheduledEnd(settings.schedule) { ends.append(e.timeIntervalSince1970) }
+        if let e = scheduledEnd(settings.schedule), e.timeIntervalSince1970 > killedUntil { ends.append(e.timeIntervalSince1970) }
         guard let m = ends.max(), m > Date().timeIntervalSince1970 else { return nil }
         return Date(timeIntervalSince1970: m)
     }
@@ -218,7 +229,7 @@ final class FocusLock: NSObject, NSApplicationDelegate {
             NSWorkspace.shared.runningApplications.forEach(block)
             let sites = expandedSites(settings.blockedSites)
             // keep the helper's copy of the site list and end time current (schedule sessions included)
-            if loadState()?.focusUntil ?? 0 < until.timeIntervalSince1970 || loadState()?.blockedSites != sites {
+            if !killPending, loadState()?.focusUntil ?? 0 < until.timeIntervalSince1970 || loadState()?.blockedSites != sites {
                 saveState(SessionState(focusUntil: until.timeIntervalSince1970, blockedSites: sites))
             }
             // A tab opened before focus started keeps its connection, so /etc/hosts alone doesn't stop it.
@@ -241,6 +252,12 @@ final class FocusLock: NSObject, NSApplicationDelegate {
             let f = DateFormatter(); f.timeStyle = .short
             menu.addItem(withTitle: "Locked in until \(f.string(from: until))", action: nil, keyEquivalent: "")
             menu.addItem(withTitle: "Blocking \(settings.blockedApps.count) apps, \(settings.blockedSites.count) sites", action: nil, keyEquivalent: "")
+            menu.addItem(.separator())
+            if killCodeSet {
+                let k = NSMenuItem(title: "End early with kill code…", action: #selector(askKillCode), keyEquivalent: "")
+                k.target = self
+                menu.addItem(k)
+            }
             menu.addItem(.separator())
             menu.addItem(withTitle: "Add time:", action: nil, keyEquivalent: "")
         } else {
@@ -302,6 +319,56 @@ final class FocusLock: NSObject, NSApplicationDelegate {
         a.addButton(withTitle: "Lock in"); a.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         if a.runModal() == .alertFirstButtonReturn { start(minutes: mins) }
+    }
+
+    /// While the helper checks a kill code, don't rewrite state.json (that would start the session again).
+    var killPending = false
+
+    @objc func askKillCode() {
+        let a = NSAlert()
+        a.messageText = "End focus early"
+        a.informativeText = "Type the kill code you set when you installed Focus Lock."
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        a.accessoryView = field
+        a.addButton(withTitle: "End focus"); a.addButton(withTitle: "Cancel")
+        a.window.initialFirstResponder = field
+        NSApp.activate(ignoringOtherApps: true)
+        guard a.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty else { return }
+        try? FileManager.default.removeItem(at: killResultURL)
+        guard FileManager.default.createFile(atPath: killRequestURL.path, contents: Data(field.stringValue.utf8),
+                                             attributes: [.posixPermissions: 0o600]) else { return }
+        killPending = true
+        waitForKillResult(tries: 0)
+    }
+
+    /// The helper checks every 3 seconds; give it up to 10.
+    func waitForKillResult(tries: Int) {
+        guard let r = try? String(contentsOf: killResultURL, encoding: .utf8) else {
+            if tries < 20 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.waitForKillResult(tries: tries + 1) }
+            } else {
+                try? FileManager.default.removeItem(at: killRequestURL)
+                killPending = false
+                tell("No answer from the helper", "Focus Lock's helper isn't running. Run install.sh again.")
+            }
+            return
+        }
+        try? FileManager.default.removeItem(at: killResultURL)
+        killPending = false
+        tick()
+        switch r.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "ok": tell("Focus ended", "Blocked apps and sites are allowed again.")
+        case "wrong": tell("Wrong kill code", "Focus is still on. You can try again in 30 seconds.")
+        case "no-code": tell("No kill code set", "Run install.sh to set one.")
+        case let w where w.hasPrefix("wait "): tell("Too soon", "Try again in \(w.dropFirst(5)) seconds.")
+        default: break
+        }
+    }
+
+    func tell(_ title: String, _ text: String) {
+        let a = NSAlert(); a.messageText = title; a.informativeText = text
+        NSApp.activate(ignoringOtherApps: true)
+        a.runModal()
     }
 
     let settingsWindow = SettingsWindow()

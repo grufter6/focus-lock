@@ -3,11 +3,14 @@
 //   - blocks the session's sites in /etc/hosts, which every browser uses
 //   - closes blocked apps (and the Minecraft game, which runs as a Java process)
 //   - keeps its own end time in a root-owned file that only ever moves later
-// The app asks for a session by writing ~/Library/Application Support/FocusLock/state.json.
+//   - ends the session early only for the kill code, whose SHA-256 is in a root-only file set by install.sh
+// The app asks for a session by writing ~/Library/Application Support/FocusLock/state.json, and for an
+// early end by writing the typed kill code to kill-request next to it. The answer goes in kill-result.
 //
 //   focuslock-helper --user-dir "<home>/Library/Application Support/FocusLock" [--once]
 //
 // For tests: FOCUSLOCK_SYSDIR and FOCUSLOCK_HOSTS point it at scratch files (and skip the DNS flush).
+import CryptoKit
 import Foundation
 
 let env = ProcessInfo.processInfo.environment
@@ -24,6 +27,12 @@ let once = args.contains("--once")
 
 let lockURL = sysDir.appendingPathComponent("lock-until")
 let blockedURL = sysDir.appendingPathComponent("blocked.json")
+let killCodeURL = sysDir.appendingPathComponent("kill-code")        // SHA-256 hex, root only (0600)
+let killedURL = sysDir.appendingPathComponent("killed-until")       // end of the session the kill code ended
+let killRequestURL = userDir.appendingPathComponent("kill-request")
+let killResultURL = userDir.appendingPathComponent("kill-result")
+/// Wait after a wrong kill code, so it can't be guessed quickly.
+let killCooldown: Double = 30
 /// A typo in state.json can't lock the Mac for longer than this.
 let maxSession: Double = 24 * 3600
 
@@ -134,6 +143,48 @@ func closeBlocked(_ b: Blocked) {
     }
 }
 
+// MARK: - kill code
+
+var nextKillTry: Double = 0
+
+func sha256(_ s: String) -> String {
+    SHA256.hash(data: Data(s.utf8)).map { String(format: "%02x", $0) }.joined()
+}
+
+func answer(_ s: String) {
+    try? s.write(to: killResultURL, atomically: true, encoding: .utf8)
+    try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: killResultURL.path)
+}
+
+/// Handles a kill-request from the app. True when the kill code was right and the session should end.
+func checkKillRequest(now: Double) -> Bool {
+    guard let typed = try? String(contentsOf: killRequestURL, encoding: .utf8) else { return false }
+    try? FileManager.default.removeItem(at: killRequestURL)
+    guard let want = (try? String(contentsOf: killCodeURL, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !want.isEmpty else { answer("no-code"); return false }
+    if now < nextKillTry { answer("wait \(Int(ceil(nextKillTry - now)))"); return false }
+    guard sha256(typed.trimmingCharacters(in: .whitespacesAndNewlines)) == want else {
+        nextKillTry = now + killCooldown
+        log("wrong kill code")
+        answer("wrong")
+        return false
+    }
+    return true
+}
+
+/// Ends the session now. Writes killed-until first, so the app stops re-requesting the focus hours it ended.
+func endEarly(until end: Double) {
+    try? FileManager.default.createDirectory(at: sysDir, withIntermediateDirectories: true)
+    try? String(end).write(to: killedURL, atomically: true, encoding: .utf8)
+    try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: killedURL.path)
+    try? FileManager.default.removeItem(at: userDir.appendingPathComponent("state.json"))
+    try? FileManager.default.removeItem(at: lockURL)
+    try? FileManager.default.removeItem(at: blockedURL)
+    setHosts([])
+    log("kill code: session ended early (was locked until \(Date(timeIntervalSince1970: end)))")
+    answer("ok")
+}
+
 // MARK: - the loop
 
 func readLock() -> Double { Double((try? String(contentsOf: lockURL, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? 0 }
@@ -146,7 +197,11 @@ func save(_ b: Blocked) {
 func step() {
     let now = Date().timeIntervalSince1970
     var lock = readLock()
-    let state = read(State.self, userDir.appendingPathComponent("state.json"))
+    var state = read(State.self, userDir.appendingPathComponent("state.json"))
+    if checkKillRequest(now: now) {
+        endEarly(until: max(lock, state?.focusUntil ?? 0, now))
+        lock = 0; state = nil
+    }
     let requested = state.map { min($0.focusUntil, now + maxSession) } ?? 0
     if requested > max(lock, now) {
         lock = requested
